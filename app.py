@@ -4,17 +4,11 @@ import numpy as np
 import os
 import urllib.request
 import base64
-from flask import Flask, Response, jsonify, send_from_directory, request
+from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 
-# Tell MediaPipe to use CPU only, no OpenGL needed
 os.environ['MEDIAPIPE_DISABLE_GPU'] = '1'
 os.environ['MESA_GL_VERSION_OVERRIDE'] = '3.3'
-
-import mediapipe as mp
-from mediapipe.tasks.python import BaseOptions
-from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions
-from mediapipe.tasks.python.vision.core.vision_task_running_mode import VisionTaskRunningMode
 
 app = Flask(__name__, static_folder='.')
 CORS(app, origins=[
@@ -36,23 +30,18 @@ if not os.path.exists(MODEL_PATH):
     urllib.request.urlretrieve(url, MODEL_PATH)
     print("Done.")
 
-# ── Lazy initialization of MediaPipe ──
-_image_landmarker = None
+# ── Use old mediapipe solutions API (no OpenGL needed) ──
+import mediapipe as mp
+mp_hands = mp.solutions.hands
+hands_detector = mp_hands.Hands(
+    static_image_mode=True,
+    max_num_hands=1,
+    min_detection_confidence=0.3
+)
 
-def get_landmarker():
-    global _image_landmarker
-    if _image_landmarker is None:
-        image_options = HandLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=MODEL_PATH),
-            running_mode=VisionTaskRunningMode.IMAGE,
-            num_hands=1
-        )
-        _image_landmarker = HandLandmarker.create_from_options(image_options)
-    return _image_landmarker
-
-def get_features(hand):
-    x = [lm.x for lm in hand]
-    y = [lm.y for lm in hand]
+def get_features(hand_landmarks):
+    x = [lm.x for lm in hand_landmarks.landmark]
+    y = [lm.y for lm in hand_landmarks.landmark]
     aux = []
     for xi, yi in zip(x, y):
         aux.append(xi - min(x))
@@ -60,6 +49,17 @@ def get_features(hand):
     if len(aux) < FEATURE_LEN:
         aux += [0] * (FEATURE_LEN - len(aux))
     return aux[:FEATURE_LEN]
+
+def predict_from_image(img):
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = hands_detector.process(img_rgb)
+    if not results.multi_hand_landmarks:
+        return None
+    hand = results.multi_hand_landmarks[0]
+    feats = get_features(hand)
+    pred = model.predict([np.array(feats)])
+    letter = str(pred[0])
+    return ' ' if letter == 'SPACE' else letter
 
 # ── Routes ──
 @app.route('/')
@@ -78,21 +78,10 @@ def predict_frame():
         img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img is None:
             return jsonify({'letter': ''})
-
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-        results = get_landmarker().detect(mp_image)
-
-        if not results.hand_landmarks:
-            return jsonify({'letter': ''})
-
-        hand = results.hand_landmarks[0]
-        feats = get_features(hand)
-        pred = model.predict([np.array(feats)])
-        letter = str(pred[0])
-        letter = ' ' if letter == 'SPACE' else letter
-        return jsonify({'letter': letter})
+        letter = predict_from_image(img)
+        return jsonify({'letter': letter or ''})
     except Exception as e:
+        print(f"Error: {e}")
         return jsonify({'error': str(e), 'letter': ''}), 500
 
 @app.route('/predict_image', methods=['POST'])
@@ -105,21 +94,11 @@ def predict_image():
         img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img is None:
             return jsonify({'error': 'Could not decode image'}), 400
-
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-        results = get_landmarker().detect(mp_image)
-
-        if not results.hand_landmarks:
+        letter = predict_from_image(img)
+        if not letter:
             return jsonify({'letter': None, 'message': 'No hand detected in image'})
-
-        hand = results.hand_landmarks[0]
-        feats = get_features(hand)
-        pred = model.predict([np.array(feats)])
-        letter = str(pred[0])
-        display = '[SPACE]' if letter == 'SPACE' else letter
-        actual  = ' '      if letter == 'SPACE' else letter
-        return jsonify({'letter': actual, 'display': display})
+        display = '[SPACE]' if letter == ' ' else letter
+        return jsonify({'letter': letter, 'display': display})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
