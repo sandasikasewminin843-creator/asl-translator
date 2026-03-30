@@ -17,7 +17,11 @@ from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions
 from mediapipe.tasks.python.vision.core.vision_task_running_mode import VisionTaskRunningMode
 
 app = Flask(__name__, static_folder='.')
-CORS(app)
+CORS(app, origins=[
+    "https://sandasikasewminin843-creator.github.io",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000"
+], supports_credentials=True)
 
 # ── Model ──
 model_dict = pickle.load(open('./model.p', 'rb'))
