@@ -30,7 +30,7 @@ if not os.path.exists(MODEL_PATH):
 
 # ── MediaPipe IMAGE mode (for uploaded frames) ──
 image_options = HandLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=MODEL_PATH),
+    base_options=BaseOptions(model_asset_path=MODEL_PATH, delegate="CPU"),  # force CPU
     running_mode=VisionTaskRunningMode.IMAGE,
     num_hands=1
 )
